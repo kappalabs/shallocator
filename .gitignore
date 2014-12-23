@@ -1,0 +1,8 @@
+*~
+*.o
+*.log
+*.swp
+*.swo
+*.in
+*.out
+*.err
