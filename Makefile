@@ -1,7 +1,7 @@
 .PHONY: clean
 
-CFLAGS	= -Wall -c #-m64
-LDFLAGS	= -Wall #-m64
+CFLAGS	= -Wall -c -g #-m32 -std=c89 #-m64
+LDFLAGS	= -Wall -g #-m32 #-m64
 LDLIBS	= -lm
 PROG	= shalloc
 OBJS	= shalloc.o #next.o
