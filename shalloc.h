@@ -2,6 +2,60 @@
 #define SHALLOC_H_
 
 
+/*
+ *   heap break ----> --------  ^   
+ *                    |      |  |
+ *                    . HEAP .  | 2^pool_size
+ *                    |      |  |
+ *   mp.base_addr --> --------  v
+ *
+ *   Structure mem_pool contains all basic needed information about allocated memory under heap break.
+ */
+struct mem_pool {
+	/* Adress of the beginning of heap. */
+	void *base_addr;
+	/* Size of allocated memory (in power of 2) */
+	unsigned long pool_size;
+	/* Maximum addressable space */
+	unsigned long max_size;
+
+	/*
+	 *  Array of heads for cyclic linked lists,
+	 *  each list contains only free blocks
+	 *  of size 2^i for list starting at avail[i].
+	 */
+	struct avail_head *avail;
+};
+
+/*
+ *  Useful states of memory block
+ */
+typedef enum m_state { 
+	FREE, USED, ZERO
+} M_STATE;
+
+/*
+ *  Description of one memory block on heap.
+ */
+typedef struct block {
+	struct block *prev;
+	struct block *next;
+
+	M_STATE state;
+	unsigned long k_size; /* Size of this whole block, (will always be power of 2) */
+} BLOCK;
+
+
+/* Size of every memory block header */
+#define B_SIZE	sizeof(struct block)
+/* Pointer to the data section for given block */
+#define B_DATA(p)	(void *) ((p) + B_SIZE)
+/* Length of data in block from given pointer */
+#define B_DATA_SIZE(p)	(pow2(((p))->k_size) - B_SIZE)
+/* From pointer to data section it returns pointer to the block structure */
+#define B_HEAD(p)	(struct block *) ((p) - B_SIZE)
+
+
 /**
  *  Allocate 'size' bytes and return pointer to the allocated memory.
  *  The memory is not initialized. If 'size' is 0, shalloc() returns NULL.
