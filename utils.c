@@ -14,5 +14,5 @@ unsigned long get_pow(unsigned long value) {
 }
 
 int list_empty(struct avail_head *head) {
-	return  head->next == (struct block *) head;
+	return (head->next == (struct block *) head) && (head->prev == (struct block *) head);
 }

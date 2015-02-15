@@ -18,6 +18,8 @@ struct mem_pool {
 	unsigned long pool_size;
 	/* Maximum addressable space */
 	unsigned long max_size;
+	/* Size of the first block, which contains 'avail' array (in pow of 2) */
+	unsigned long init_size;
 
 	/*
 	 *  Array of heads for cyclic linked lists,
@@ -49,11 +51,11 @@ typedef struct block {
 /* Size of every memory block header */
 #define B_SIZE	sizeof(struct block)
 /* Pointer to the data section for given block */
-#define B_DATA(p)	(void *) ((p) + B_SIZE)
+#define B_DATA(p)	(void *) ((unsigned long)(p) + B_SIZE)
 /* Length of data in block from given pointer */
-#define B_DATA_SIZE(p)	(pow2(((p))->k_size) - B_SIZE)
+#define B_DATA_SIZE(p)	(unsigned long) (pow2((p)->k_size) - B_SIZE)
 /* From pointer to data section it returns pointer to the block structure */
-#define B_HEAD(p)	(struct block *) ((p) - B_SIZE)
+#define B_HEAD(p)	(struct block *) ((unsigned long)(p) - B_SIZE)
 
 
 /**
