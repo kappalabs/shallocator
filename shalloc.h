@@ -33,7 +33,7 @@ struct mem_pool {
  *  Useful states of memory block
  */
 typedef enum m_state { 
-	FREE, USED, ZERO
+	FREE, USED, ZERO, UNUSED
 } M_STATE;
 
 /*
@@ -49,7 +49,7 @@ typedef struct block {
 
 
 /* Size of every memory block header */
-#define B_SIZE	sizeof(struct block)
+#define B_SIZE	(unsigned long) sizeof(struct block)
 /* Pointer to the data section for given block */
 #define B_DATA(p)	(void *) ((unsigned long)(p) + B_SIZE)
 /* Length of data in block from given pointer */

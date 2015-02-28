@@ -20,8 +20,14 @@ struct avail_head {
 /*
  *  Find nearest bigger number, which is power of two and return the power.
  */
-unsigned long get_pow(unsigned long);
+extern unsigned long get_pow(unsigned long);
 
-int list_empty(struct avail_head *);
+extern int list_empty(struct avail_head *);
+
+extern void dump_data(void *ptr, unsigned long size);
+
+extern void print_block_info(struct block *ptr);
+
+extern char *read_line(int fd);
 
 #endif
