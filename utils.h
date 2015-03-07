@@ -7,7 +7,7 @@
 /*
  *  Return desired power of 2.
  */
-#define pow2(pow)	(1 << (pow))
+#define pow2(pow)	((unsigned long)1 << (pow))
 
 #define LOG	printf
 
@@ -23,6 +23,8 @@ struct avail_head {
 extern unsigned long get_pow(unsigned long);
 
 extern int list_empty(struct avail_head *);
+
+extern int list_len(struct avail_head *);
 
 extern void dump_data(void *ptr, unsigned long size);
 

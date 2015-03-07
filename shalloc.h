@@ -106,22 +106,25 @@ extern void shee(void *ptr);
 extern int dump_mem(/*TODO*/);
 
 /**
+ *  OBSOLETE
+ */
+/**
  *  Start to share the heap memory by creating TCP connection with hosts
  *  defined in local config file.
  *  Return number of hosts available, -1 on error.
  */
-extern int share(/*TODO*/);
+//extern int share(/*TODO*/);
 
 /**
  *  Take the heap memory and swap it off onto hosts from local config file.
  *  Return number of hosts, that retrieved the data, -1 on error.
  */
-extern int shwapoff(/*TODO*/);
+//extern int shwapoff(/*TODO*/);
 
 /**
  *  Make the heap memory invisible again by closing all connections with hosts.
  */
-extern int unshare(/*TODO*/);
+//extern int unshare(/*TODO*/);
 
 /**
  *  As a host, accept connection and start retrieving the shared memmory.

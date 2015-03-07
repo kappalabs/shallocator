@@ -19,6 +19,19 @@
 
 struct mem_pool mp;
 
+void print_avail_map() {
+	if (mp.base_addr == NULL) {
+		return;
+	}
+	
+	int i;
+	for (i=0; i <= mp.pool_size; i++) {
+		LOG("%02d  ", i);
+	} LOG("\n");
+	for (i=0; i <= mp.pool_size; i++) {
+		LOG("%02d  ", list_len(&mp.avail[i]));
+	} LOG("\n");
+}
 
 static int init_pool() {
 	/* Get current heap break address */
@@ -47,7 +60,7 @@ static int init_pool() {
 
 	LOG("--## POOL INIT INFO ##--\n");
 	LOG("Heap memory begins at base_addr = %p\n", mp.base_addr);
-	LOG("Size of the first block is init_size = 2^%lu = %uB\n", mp.init_size, pow2(mp.init_size));
+	LOG("Size of the first block is init_size = 2^%lu = %luB\n", mp.init_size, pow2(mp.init_size));
 	LOG("Maximum pool size is max_size = 2^%lu = %luB\n", mp.max_size, -1L);
 
 	/* Init 'avail', array of cyclic linked list */
@@ -77,8 +90,11 @@ static void *alloc(unsigned long size_pow, enum m_state state) {
 		}
 	}
 
+//	LOG("BEFORE ALLOC\n");
+//	print_avail_map();
+
 	/* Size in power of 2, which needs to be reserved */
-	LOG("Request for 2^%lu = %uB\n", size_pow, pow2(size_pow));
+	//LOG("Request for 2^%lu = %luB\n", size_pow, pow2(size_pow));
 	/* Size of the first suitable block which is available (in pow of 2) */
 	unsigned long j;
 	/* Find the value of 'j' in available memory space if possible */
@@ -94,7 +110,9 @@ static void *alloc(unsigned long size_pow, enum m_state state) {
 	while (list_empty(&mp.avail[j])) {
 		//LOG("j=%lu <= pool_size=%lu <= max=%lu\n", j, mp.pool_size, mp.max_size);
 		/* Cannot adress this amount of memory */
-		if (mp.pool_size >= mp.max_size) {
+		if (get_pow((unsigned long)mp.base_addr) + size_pow >= mp.max_size) {
+		//TODO ktery pouzit?
+		//if (mp.max_size >= mp.max_size) {
 			LOG("Maximum size reached!\n");
 			errno = ENOMEM;
 			return NULL;
@@ -162,6 +180,10 @@ static void *alloc(unsigned long size_pow, enum m_state state) {
 		memset(B_DATA(l), 0, B_DATA_SIZE(l));
 	}
 
+//	LOG("AFTER ALLOC\n");
+//	print_avail_map();
+//	LOG("\n");
+
 	return B_DATA(l);
 }
 
@@ -184,7 +206,7 @@ void *shcalloc(size_t nmemb, size_t size) {
 }
 
 static void *ralloc(void *ptr, size_t size, enum m_state state) {
-	LOG("Request for size change to %zd\n", size);
+	//LOG("Request for size change to %zd\n", size);
 	
 	if (size == 0) {
 		shee(ptr);
@@ -206,6 +228,11 @@ static void *ralloc(void *ptr, size_t size, enum m_state state) {
 		new_ptr = shcalloc(1, size);
 	} else {
 		new_ptr = shalloc(size);
+	}
+	/* In case of failure, previous data is lost */
+	if (new_ptr == NULL) {
+		shee(ptr);
+		return NULL;
 	}
 	/* Previous data must be preserved, if possible */
 	memcpy(new_ptr, ptr, MIN(B_DATA_SIZE(b), B_DATA_SIZE(B_HEAD(new_ptr))));
@@ -239,31 +266,37 @@ void shee(void *ptr) {
 		return;
 	}
 
+//	LOG("BEFORE SHEE AVAIL MAP\n");
+//	LOG("Mem_pool size = 2^%luB\n", mp.pool_size);
+//	print_avail_map();
+
 	struct block *b = B_HEAD(ptr);
 	struct block *buddy = NULL;
 	b->state = FREE;
 
 //	LOG("Going to free:\n");
+	//LOG("Shee block of size 2^%luB = %luB\n", b->k_size, pow2(b->k_size));
 //	print_block_info(b);
 
 	/* Combine free block if buddy-possible */
-	while (b->k_size < mp.pool_size) {
+	unsigned long k_size = b->k_size;
+	while (k_size < mp.pool_size) {
 		/* Find my buddy */
-		buddy = get_buddy(b, b->k_size);
+		buddy = get_buddy(b, k_size);
 
 		/* Is buddy available? */
 		if (buddy->state == USED) {
 			break;
 		}
 		/* Is buddy used somewhere inside? */
- 		if (buddy->k_size != b->k_size) {
+ 		if (buddy->k_size != k_size) {
 			break;
 		}
 	
 		/* Combine buddies together */
 		buddy->prev->next = buddy->next;
 		buddy->next->prev = buddy->prev;
-		b->k_size++;
+		k_size++;
 		if (buddy < b) {
 			b = buddy;
 		}
@@ -271,6 +304,7 @@ void shee(void *ptr) {
 
 	/* Put block on proper 'avail' list */
 	b->state = FREE;
+	b->k_size = k_size;
 	struct block *p;
 	p = mp.avail[b->k_size].next;
 	b->next = p;
@@ -279,7 +313,12 @@ void shee(void *ptr) {
 	mp.avail[b->k_size].next = b;
 
 
-	//TODO: muze klidne provadet jine vlakno
+//	LOG("AFTER SHEE AVAIL MAP\n");
+//	print_avail_map();
+//	LOG("\n");
+
+	//TODO: Bude provadet jine vlakno - vyresi se problem uklizeni poolu
+	//  po neuspesnem shallocu, ktery byl proveden jako prvni
 	/* Shrink down memory pool if possible */
 	int enableDestroy = 1;
 	while (enableDestroy && !list_empty(&mp.avail[mp.pool_size-1])) {
@@ -289,6 +328,10 @@ void shee(void *ptr) {
 		if (b < buddy) {
 			break;
 		}
+
+		/* Correct the 'avail' array of old pool */
+		mp.avail[mp.pool_size].prev = (struct block *) &mp.avail[mp.pool_size];
+		mp.avail[mp.pool_size].next = (struct block *) &mp.avail[mp.pool_size];
 
 		//LOG("--## SHRINKING ##--\n");
 		/* Then we can shrink the heap/pool */
@@ -323,39 +366,69 @@ int main(int argc, char **argv) {
 
 	struct clients *cfg;
 	printf("Printing config file input\n");
-	cfg = read_conf("demo.cfg"); 
+	cfg = read_config("demo.cfg"); 
 	dump_config(cfg);
 	free_config(cfg);
 
-	int i;
-	type *p1, *p2, *p3;
-	int bools[] = {1, 1, 1};
+	return 0;
 
-	bools[0] = 1;
-	if ((p1 = (type *) shcalloc(1024*1024*64, sizeof(type))) == NULL) {
+	int i;
+	type *p1, *p2, *p3, *p4;
+	int bools[] = {0, 0, 0, 0};
+
+	if ((p1 = (type *) shcalloc(1024*128, sizeof(type))) == NULL) {
 		perror("shcalloc");
 		bools[0] = 0;
 	} else {
-		for (i=0; i<1024*1024*64; i++) {
+		bools[0] = 1;
+		for (i=0; i<1024*128; i++) {
 			p1[i] = i;
 		}
 		//print_block_info(B_HEAD(p1));
 	}
+	bools[0] = 0;
+	shee(p1);
+//	return 0;
 
-	bools[1] = 1;
+	if ((p1 = (type *) shalloc(5 * sizeof(type))) == NULL) {
+		perror("shalloc");
+		bools[0] = 0;
+	} else {
+		bools[0] = 1;
+		for (i=0; i<5; i++) {
+			p1[i] = i;
+		}
+	}
+
 	if ((p2 = (type *) shalloc(5 * sizeof(type))) == NULL) {
 		perror("shalloc");
 		bools[1] = 0;
 	} else {
+		bools[1] = 1;
 		for (i=0; i<5; i++) {
 			p2[i] = i;
 		}
 	}
 
-	bools[2] = 1;
+	if ((p4 = (type *) shalloc(5 * sizeof(type))) == NULL) {
+		perror("shalloc");
+		bools[3] = 0;
+	} else {
+		bools[3] = 1;
+		for (i=0; i<5; i++) {
+			p4[i] = i;
+		}
+	}
+
+	bools[1] = 0;
+	shee(p2);
+	bools[0] = 0;
+	shee(p1);
+	bools[3] = 0;
+	shee(p4);
+
 	if ((p3 = (type *) shalloc(32 * sizeof(type))) == NULL) {
 		perror("shalloc");
-		bools[2] = 0;
 	} else {
 		for (i=0; i<32; i++) {
 			p3[i] = i;
@@ -363,10 +436,8 @@ int main(int argc, char **argv) {
 		shee(p3);
 	}
 
-	bools[2] = 1;
 	if ((p3 = (type *) shalloc(32 * sizeof(type))) == NULL) {
 		perror("shalloc");
-		bools[2] = 0;
 	} else {
 		for (i=0; i<32; i++) {
 			p3[i] = i;
@@ -381,11 +452,11 @@ int main(int argc, char **argv) {
 		shee(p1);
 	}
 	
-	bools[2] = 1;
 	if ((p3 = (type *) shalloc(32 * sizeof(type))) == NULL) {
 		perror("shalloc");
 		bools[2] = 0;
 	} else {
+		bools[2] = 1;
 		for (i=0; i<32; i++) {
 			p3[i] = i;
 		}

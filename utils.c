@@ -17,7 +17,17 @@ unsigned long get_pow(unsigned long value) {
 }
 
 int list_empty(struct avail_head *head) {
-	return (head->next == (struct block *) head) && (head->prev == (struct block *) head);
+	return (head->next == (struct block *)head);// && (head->prev == (struct block *)head);
+}
+
+int list_len(struct avail_head *head) {
+	int i = 0;
+	struct avail_head *tmp = head;
+	while ((tmp->next != (struct block *)head)) {// && (tmp->prev != (struct block *)head)) {
+		i++;
+		tmp = (struct avail_head *)tmp->next;
+	}
+	return i;
 }
 
 void dump_data(void *ptr, unsigned long size) {
@@ -42,13 +52,13 @@ void print_block_info(struct block *ptr) {
 	printf("pos = %p, ", ptr);
 	printf("state = %u, k_size = %lu\n", b->state, b->k_size);
 	printf("data =\n");
-	LOG("CHECK pow=%u, bsize=%lu\n", pow2(b->k_size), B_SIZE);
+	LOG("CHECK pow=%lu, bsize=%lu\n", pow2(b->k_size), B_SIZE);
 	dump_data(B_DATA(ptr), B_DATA_SIZE(ptr));
 	printf("\n");
 }
 
 char *read_line(int fd) {
-	size_t buf_len = 16;
+	size_t buf_len = 24;
 	size_t line_len = buf_len + 1;
 	char BUF[buf_len];
 	ssize_t readed;
@@ -56,7 +66,7 @@ char *read_line(int fd) {
 	if ((line = (char *) shcalloc(1, line_len)) == NULL) {
 		return NULL;
 	}
-//TODO promazat
+//TODO promazat + osetrit close(fd) zde? - MP 0
 	//int i=0;
 	while ((readed = read(fd, &BUF, buf_len)) > 0) {
 		//printf("OTOCKA %d: ", i++);
@@ -70,7 +80,6 @@ char *read_line(int fd) {
 			if ((line = (char *) reshcalloc(line, line_len)) == NULL) {
 				return NULL;
 			}
-			line[line_len - buf_len] = '\0';
 		} else {
 		//	printf("line pred upravou: >>%s<<\n", line);
 			line_len = strlen(line);

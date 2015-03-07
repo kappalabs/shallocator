@@ -15,11 +15,18 @@
 #include "shalloc.h"
 #include "utils.h"
 
+
+/**
+ *  This structure will contain whole config file
+ */
+static struct clients *config;
+
+
 /**
  *  Item in config file has format host#port, host is IP adress port is number in decimal format.
  *  Every item is on its own line.
  */
-struct clients *read_conf(char *filename) {
+struct clients *read_config(char *filename) {
 	int fd;
 	if ((fd = open(filename, O_RDONLY)) == -1) {
 		perror("open");
@@ -31,6 +38,8 @@ struct clients *read_conf(char *filename) {
 	struct clients *cls; 
 	if ((cls = (struct clients *) shalloc(sizeof(struct clients))) == NULL) {
 		perror("shalloc");
+		/* Error check? */
+		close(fd);
 		return NULL;
 	}
 	cls->num_items = 0;
@@ -40,17 +49,25 @@ struct clients *read_conf(char *filename) {
 	while ((line = read_line(fd)) != NULL) {
 		/* Enlarge the space, if we need to */
 		cls->num_items++;
-		if ((cls->items = (struct client *) reshalloc(cls->items, cls->num_items * sizeof(struct client))) == NULL) {
+		if ((cls->items = (struct client *) reshcalloc(cls->items, cls->num_items * sizeof(struct client))) == NULL) {
 			perror("reshalloc");
+			/* Error check? */
+			close(fd);
+			return NULL;
+		}
+		char *pos;
+		if ((pos = strchr(line, '#')) == NULL) {
+			/* Config file has incorrect structure */
+			shee(line);
 			return NULL;
 		}
 		cls->items[i].host = strtok_r(line, "#", &save_ptr);
 		cls->items[i].port = strtok_r(NULL, "#", &save_ptr);
 		i++;
-		//shee(line);
 	}
-	//shee(line); // <-- ...host = strdup(strtok_r(line, "#", &save_ptr));
-	printf("got %d lines\n", cls->num_items);
+	if (close(fd) != 0) {
+		perror("close");
+	}
 
 	return cls;
 }
@@ -59,9 +76,10 @@ void free_config(struct clients *config) {
 	int i;
 	for (i=0; i < config->num_items; i++) {
 		shee(config->items[i].host);
-		//shee(config->items[i].port);
+		config->items[i].host = NULL;
 	}
 	shee(config->items);
+	config->items = NULL;
 	shee(config);
 	config = NULL;
 }
@@ -106,6 +124,20 @@ int create_serv(struct clients *cls) {
 	}
 
 	return 0;
+}
+
+/**
+ *  Send message to clients
+ */
+void *shwapoff(void *ptr) {
+	if (config == NULL) {
+		config = read_config("demo.cfg");
+	}
+	/*TODO priprav informace o bloku  */
+	/*TODO najdi klienta */
+	/*TODO odesli data  */
+
+	return NULL;
 }
 
 void dump_config(struct clients *config) {
