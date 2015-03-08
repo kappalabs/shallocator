@@ -364,31 +364,31 @@ typedef short type;
 int main(int argc, char **argv) {
 	printf("Block size = %lu\n", B_SIZE);
 
-	struct clients *cfg;
-	printf("Printing config file input\n");
-	cfg = read_config("demo.cfg"); 
-	dump_config(cfg);
-	free_config(cfg);
-
-	return 0;
+//	struct clients *cfg;
+//	printf("Printing config file input\n");
+//	cfg = read_config("demo.cfg"); 
+//	dump_config(cfg);
+//	free_config(cfg);
+//
+//	return 0;
 
 	int i;
 	type *p1, *p2, *p3, *p4;
 	int bools[] = {0, 0, 0, 0};
 
-	if ((p1 = (type *) shcalloc(1024*128, sizeof(type))) == NULL) {
+	if ((p1 = (type *) shcalloc(1024*1024*128, sizeof(type))) == NULL) {
 		perror("shcalloc");
 		bools[0] = 0;
 	} else {
 		bools[0] = 1;
-		for (i=0; i<1024*128; i++) {
+		for (i=0; i<1024*1024*128; i++) {
 			p1[i] = i;
 		}
 		//print_block_info(B_HEAD(p1));
 	}
 	bools[0] = 0;
 	shee(p1);
-//	return 0;
+	return 0;
 
 	if ((p1 = (type *) shalloc(5 * sizeof(type))) == NULL) {
 		perror("shalloc");
