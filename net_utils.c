@@ -19,9 +19,17 @@
 
 
 /**
- *  This structure will contain whole config file
+ *  This structure will contain whole config file.
  */
 static struct clients *config;
+
+/**
+ *  Structure for information about all swapped blocks.
+ */
+static struct swp_bls {
+	struct swp_bl *blocks;
+	uint32_t num;
+} swapped_bls;
 
 
 /**
@@ -29,8 +37,8 @@ static struct clients *config;
  *  Every item is on its own line.
  */
 struct clients *read_config(char *filename) {
-	int fd;
-	if ((fd = open(filename, O_RDONLY)) == -1) {
+	int serv_sock;
+	if ((serv_sock = open(filename, O_RDONLY)) == -1) {
 		perror("open");
 		return NULL;
 	}
@@ -41,20 +49,20 @@ struct clients *read_config(char *filename) {
 	if ((cls = (struct clients *) shalloc(sizeof(struct clients))) == NULL) {
 		perror("shalloc");
 		/* Error check? */
-		close(fd);
+		close(serv_sock);
 		return NULL;
 	}
 	cls->num_items = 0;
 	cls->items = NULL;
 
 	int i = 0;
-	while ((line = read_line(fd)) != NULL) {
+	while ((line = read_line(serv_sock)) != NULL) {
 		/* Enlarge the space, if we need to */
 		cls->num_items++;
 		if ((cls->items = (struct client *) reshcalloc(cls->items, cls->num_items * sizeof(struct client))) == NULL) {
 			perror("reshalloc");
 			/* Error check? */
-			close(fd);
+			close(serv_sock);
 			return NULL;
 		}
 		char *pos;
@@ -67,7 +75,7 @@ struct clients *read_config(char *filename) {
 		cls->items[i].port = strtok_r(NULL, "#", &save_ptr);
 		i++;
 	}
-	if (close(fd) != 0) {
+	if (close(serv_sock) != 0) {
 		perror("close");
 	}
 
@@ -84,37 +92,6 @@ void free_config(struct clients *config) {
 	config->items = NULL;
 	shee(config);
 	config = NULL;
-}
-
-int create_serv(struct clients *cls) {
-	return 0;
-}
-
-/**
- *  Send data block to random server.
- */
-void *shwapoff(void *ptr) {
-	if (config == NULL) {
-		config = read_config("demo.cfg");
-	}
-	/*TODO priprav informace o bloku  */
-	/*TODO najdi klienta */
-	/*TODO odesli data  */
-
-
-	return NULL;
-}
-
-/**
- *  Retrieve data block back.
- */
-void *shwapon(void *shwap_ptr) {
-	/* False call */
-	if (config == NULL || shwap_ptr == NULL) {
-		return NULL;
-	}
-
-	return NULL;
 }
 
 /**
@@ -167,7 +144,227 @@ void read_command(int sock, char *com) {
 	}
 }
 
-void shwap_client(int port, void (*p_func)(void *)) {
+/**
+ *  Send data block to random server.
+ */
+void *shwapoff(void *ptr) {
+	if (config == NULL) {
+		config = read_config("demo.cfg");
+	}
+
+	/* Information about block to be sent */
+	struct block *bl;
+	bl = B_HEAD(ptr);
+	/* 'k_size' will be casted to uint8_t */
+	if (bl->k_size > 255) {
+		fprintf(stderr, "Block is too large!\n");
+		return NULL;
+	}
+	uint8_t pow = (uint8_t)bl->k_size;
+	size_t data_size = B_DATA_SIZE(bl); 
+	char command[CMD_LEN];
+	//TODO rozumnejsi pridelovani
+	uint32_t GID = swapped_bls.num;
+	uint32_t tmp;
+
+	/* Try to find first available client */
+	int i;
+	for (i=0; i < config->num_items; i++) {
+		struct addrinfo hints, *sa, *orig_sa;
+		bzero(&hints, sizeof(hints));
+		hints.ai_socktype = SOCK_STREAM;
+		hints.ai_family = AF_UNSPEC;
+	
+		struct client cl = config->items[i];
+		int err;
+		if ((err = getaddrinfo(cl.host, cl.port, &hints, &orig_sa)) != 0) {
+			fprintf(stderr, "%s\n", gai_strerror(err));
+		}
+	
+		int serv_sock;
+		for (sa = orig_sa; sa != NULL; sa = sa->ai_next) {
+			serv_sock = socket(sa->ai_family, sa->ai_socktype, sa->ai_protocol);
+			if (serv_sock == -1){
+				perror("socket");
+				continue;
+			}
+			if (!connect(serv_sock, sa->ai_addr, sa->ai_addrlen)) {
+				break;
+			}
+		}
+		freeaddrinfo(orig_sa);
+		/* Unable to connect, lets try another client */
+		if (serv_sock == -1) {
+			continue;
+		}
+		/* Connection successful */
+	
+		/* Send RFS(GID, pow) to server */
+		net_write(serv_sock, RFS, CMD_LEN);
+		tmp = htonl(GID);
+		net_write(serv_sock, (char *)&tmp, sizeof(uint32_t));
+		net_write(serv_sock, (char *)&pow, 1);
+	
+		/* Wait for (NO)READY command */
+		read_command(serv_sock, command);
+		if (strncmp(READY, command, CMD_LEN) != 0) {
+			LOG("Incomming command: ? (NO)READY\n");
+			goto cleanup_fd;
+		}
+		LOG("Incomming command: READY\n");
+	
+		/* Send data to server */
+		//TODO buffered_net_write()
+		if (net_write(serv_sock, ptr, data_size) == data_size) {
+			LOG("All data sent\n");
+		} else { //TODO toto by se MP osetrovat ani nemelo
+			LOG("Some data were probably lost while sending\n");
+			goto cleanup_fd;
+		}
+	
+		/* Read confirmation of received data */
+		read_command(serv_sock, command);
+		if (strncmp(OK, command, CMD_LEN) != 0) {
+			LOG("Incomming command: ? (NO)OK\n");
+			goto cleanup_fd;
+		}
+		LOG("Incomming command: OK\n");
+
+		/* Block is swapped out and can be safely freed now */
+		shee(ptr);
+
+		/* Cleanup */
+		if (close(serv_sock) == -1) {
+			perror("close");
+		}
+
+		/* Save information about this swapped block */
+		//TODO jeste je treba nekde poznamenat pouzity ID
+		swapped_bls.num++;
+		struct swp_bl *swb;
+		if ((swb = (struct swp_bl *)shalloc(sizeof(struct swp_bl))) == NULL) {
+			perror("shalloc");
+			return NULL;
+		}
+		swb->ID = GID;
+		swb->pow = pow;
+		return (void *)swb;
+	
+		/* Session with this server is over */
+		cleanup_fd:
+			if (close(serv_sock) == -1) {
+				perror("close");
+			}
+	
+	}
+	return NULL;
+}
+
+/**
+ *  Retrieve shwaped data block back from server.
+ */
+void *shwapon(void *shwap_ptr) {
+	/* False call */
+	if (config == NULL || shwap_ptr == NULL) {
+		return NULL;
+	}
+
+	/* Information about block to be recieved */
+	struct swp_bl *ret_bl = (struct swp_bl *)shwap_ptr;
+
+	uint8_t pow = ret_bl->pow;
+	uint32_t RID = ret_bl->ID;
+	size_t data_size = pow2(pow) - B_SIZE;
+	char command[CMD_LEN];
+	uint32_t tmp;
+
+	/* Try to find client with desired block */
+	int i;
+	for (i=0; i < config->num_items; i++) {
+		struct addrinfo hints, *sa, *orig_sa;
+		bzero(&hints, sizeof(hints));
+		hints.ai_socktype = SOCK_STREAM;
+		hints.ai_family = AF_UNSPEC;
+	
+		struct client cl = config->items[i];
+		int err;
+		if ((err = getaddrinfo(cl.host, cl.port, &hints, &orig_sa)) != 0) {
+			fprintf(stderr, "%s\n", gai_strerror(err));
+		}
+	
+		int serv_sock;
+		for (sa = orig_sa; sa != NULL; sa = sa->ai_next) {
+			serv_sock = socket(sa->ai_family, sa->ai_socktype, sa->ai_protocol);
+			if (serv_sock == -1){
+				perror("socket");
+				continue;
+			}
+			if (!connect(serv_sock, sa->ai_addr, sa->ai_addrlen)) {
+				break;
+			}
+		}
+		freeaddrinfo(orig_sa);
+		/* Unable to connect, lets try another client */
+		if (serv_sock == -1) {
+			continue;
+		}
+		/* Connection successful */
+	
+		/* Send RFD(RID) to server */
+		net_write(serv_sock, RFD, CMD_LEN);
+		tmp = htonl(RID);
+		net_write(serv_sock, (char *)&tmp, sizeof(uint32_t));
+	
+		/* Wait for (NO)READY command */
+		read_command(serv_sock, command);
+		if (strncmp(READY, command, CMD_LEN) != 0) {
+			LOG("Incomming command: ? (NO)READY\n");
+			goto cleanup_fd;
+		}
+		LOG("Incomming command: READY\n");
+	
+		/* Send (NO)OK, based on result from shalloc() to server */
+		void *ptr = shalloc(data_size);
+		if (ptr == NULL) {
+			LOG("Sending NOOK, shalloc() failed!\n");
+			net_write(serv_sock, NOOK, CMD_LEN);
+			goto cleanup_fd;
+		}
+		LOG("Sending OK, shalloc() successful\n");
+		net_write(serv_sock, OK, CMD_LEN);
+
+		/* Recieve data from server */
+		//TODO buffered_net_read()
+		if (net_read(serv_sock, ptr, data_size) == data_size) {
+			LOG("All data received\n");
+		} else { //TODO toto by se MP osetrovat ani nemelo
+			LOG("Some data were probably lost while receiving!\n");
+			goto cleanup_fd;
+		}
+	
+		/* Cleanup */
+		if (close(serv_sock) == -1) {
+			perror("close");
+		}
+
+		/* Swapon was successful, ID can be reused */
+		shee(ret_bl);
+		ret_bl = NULL;
+
+		/* Return pointer to retrieved block data section */
+		return ptr;
+	
+		/* Session with this server is over */
+		cleanup_fd:
+			if (close(serv_sock) == -1) {
+				perror("close");
+			}
+	
+	}
+	return NULL;
+}
+
+void shwap_server(int port, void (*p_func)(void *)) {
 	int sockfd, cl_sock;
 	socklen_t cli_len;
 	struct sockaddr_in serv_addr, cli_addr;
@@ -208,7 +405,11 @@ while(1) {
 	/* Accept RFS(power, ID) */
 	read_command(cl_sock, command);
 	if (strncmp(RFS, command, CMD_LEN) != 0) {
-		goto cleanup_fd;
+		//TODO jinak nez s goto
+		if (strncmp(RFD, command, CMD_LEN) != 0) {
+			goto cleanup_fd;
+		}
+		goto rfd_command;
 	}
 	LOG("Incomming command: RFS\n");
 	/* Read parameters of this command */
@@ -251,6 +452,10 @@ while(1) {
 		p_func(ptr);
 		LOG("desired function was applied\n");
 	}
+
+	//TODO neni vhodne uziti goto
+	goto cleanup_fd;
+	rfd_command:
 
 	/* Wait for shwapon() request ~ RFD command */
 	read_command(cl_sock, command);
@@ -298,7 +503,9 @@ while(1) {
 	cleanup_ptr:
 		shee(ptr);
 	cleanup_fd:
-		close(cl_sock);
+		if(close(cl_sock) == -1) {
+			perror("close");
+		}
 
 	} //TODO EO while(true) loop
 	close(sockfd);

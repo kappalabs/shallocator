@@ -1,6 +1,7 @@
 #ifndef SHALLOC_H_
 #define SHALLOC_H_
 
+#include <stddef.h>
 
 /*
  *   heap break ----> --------  ^   

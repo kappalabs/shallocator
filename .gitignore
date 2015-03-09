@@ -7,3 +7,5 @@
 *.out
 *.err
 shalloc
+*.a
+unused/

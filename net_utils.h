@@ -2,6 +2,8 @@
 #ifndef NET_UTILS_H_
 #define NET_UTILS_H_
 
+#include <stdint.h>
+
 #include "shalloc.h"
 
 struct client {
@@ -12,6 +14,14 @@ struct client {
 struct clients {
 	int num_items;
 	struct client *items;
+};
+
+/**
+ *  Structure for Shwap client, for the possibility to retrieve data back.
+ */
+struct swp_bl {
+	uint32_t ID;
+	uint8_t pow;
 };
 
 /**
