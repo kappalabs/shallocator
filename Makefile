@@ -1,6 +1,6 @@
 .PHONY: clean examples
 
-CFLAGS	= -Wall -c -g# -m32 #-std=c89 #-m64
+CFLAGS	= -Wall -g -c# -m32 #-std=c89 #-m64
 LDFLAGS	= -Wall -g# -m32 #-m64
 LDLIBS	= -lm
 LIB	= libshalloc.a
@@ -9,13 +9,14 @@ OBJS	= $(SOURCES:.c=.o)
 CC	= gcc
 
 
-all:	libobj libshalloc examples
+all:	libshalloc examples
 
-libobj: $(wildcard *.c) $(wildcard *.h)
-	$(CC) $(LDFLAGS) -c $(SOURCES) $(LDLIBS)
+#libobj: $(wildcard *.c) $(wildcard *.h)
+#	$(CC) $(CFLAGS) $(SOURCES) $(LDLIBS)
 
-libshalloc: $(LIB)
-	ar -cvq $^ $(OBJS)
+libshalloc: $(OBJS)
+#	ar -cvq $(LIB) $(OBJS)
+	ar -rcs $(LIB) $(OBJS)
 
 examples: $(LIB)
 	cd examples; make
@@ -23,8 +24,8 @@ examples: $(LIB)
 #$(PROG): $(OBJS)
 #	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 #
-#%.o: %.c %.h
-#	$(CC) $(CFLAGS) -o $@ $<
+%.o: %.c %.h
+	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
 	rm -f $(PROG) $(OBJS)

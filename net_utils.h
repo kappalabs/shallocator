@@ -37,7 +37,7 @@ struct swp_bl {
  *                 <--  (NO)OK  % server (un)successfully saved all data
  *      <----------------------->
  *  shwapon():
- *  RFD(RID)       -->  % based on unique 'RID' number, server containing this block will respond...
+ *  RFD(RID, pow)  -->  % based on unique 'RID' number, server containing this block will respond, 'pow' specifies, how many bytes client wants back from the block
  *                 <--  (NO)READY  % ...if this client has the requested data block available
  *  (NO)OK         -->  % server is (not)prepared to read the data block (based on shalloc() value)
  *                 <--  data  % data itself

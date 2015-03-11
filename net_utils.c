@@ -152,12 +152,12 @@ void *shwapoff(void *ptr) {
 		config = read_config("demo.cfg");
 	}
 
-	/* Information about block to be sent */
+	/* Information about a block, which will be sent */
 	struct block *bl;
 	bl = B_HEAD(ptr);
 	/* 'k_size' will be casted to uint8_t */
 	if (bl->k_size > 255) {
-		fprintf(stderr, "Block is too large!\n");
+		printf("Block is too large!\n");
 		return NULL;
 	}
 	uint8_t pow = (uint8_t)bl->k_size;
@@ -176,9 +176,11 @@ void *shwapoff(void *ptr) {
 		hints.ai_family = AF_UNSPEC;
 	
 		struct client cl = config->items[i];
+		LOG("Zkousim %d. klienta >%s:%s<\n", i+1, cl.host, cl.port);
 		int err;
 		if ((err = getaddrinfo(cl.host, cl.port, &hints, &orig_sa)) != 0) {
-			fprintf(stderr, "%s\n", gai_strerror(err));
+			printf("%s\n", gai_strerror(err));
+			continue;
 		}
 	
 		int serv_sock;
@@ -189,46 +191,70 @@ void *shwapoff(void *ptr) {
 				continue;
 			}
 			if (!connect(serv_sock, sa->ai_addr, sa->ai_addrlen)) {
+				/* Success */
 				break;
 			}
+			close(serv_sock);
 		}
-		freeaddrinfo(orig_sa);
-		/* Unable to connect, lets try another client */
-		if (serv_sock == -1) {
+		/* No address succeeded, lets try another client */
+		if (sa == NULL) {
+			printf("Could not connect to client >%s:%s< !\n", cl.host, cl.port);
 			continue;
 		}
-		/* Connection successful */
+		/* Connection was created */
+		freeaddrinfo(orig_sa);
+
+		//TODO prekontrolovat
+		/* Set maximum read() blocking time */
+		struct timeval tv;
+		tv.tv_sec = 5;
+		tv.tv_usec = 0;
+		setsockopt(serv_sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(struct timeval));
 	
 		/* Send RFS(GID, pow) to server */
 		net_write(serv_sock, RFS, CMD_LEN);
 		tmp = htonl(GID);
-		net_write(serv_sock, (char *)&tmp, sizeof(uint32_t));
+		net_write(serv_sock, (char *)&tmp, 4);
 		net_write(serv_sock, (char *)&pow, 1);
+		LOG("<<RFS(GID=%"PRIu32", pow=%u) sended\n", GID, pow);
 	
 		/* Wait for (NO)READY command */
 		read_command(serv_sock, command);
-		if (strncmp(READY, command, CMD_LEN) != 0) {
-			LOG("Incomming command: ? (NO)READY\n");
+		if (strncmp(READY, command, CMD_LEN) == 0) {
+			LOG(">>Incomming command: READY\n");
+			/* This server is willing to receive data */
+		} else if (strncmp(NOREADY, command, CMD_LEN) == 0) {
+			LOG(">>Incomming command: NOREADY\n");
+			/* This server can't provide space for us, lets try another one */
+			goto cleanup_fd;
+		} else {
+			/* Unexpected command, lets try another server */
+			LOG(">>Unexpected command instead of (NO)READY!\n");
 			goto cleanup_fd;
 		}
-		LOG("Incomming command: READY\n");
 	
 		/* Send data to server */
 		//TODO buffered_net_write()
 		if (net_write(serv_sock, ptr, data_size) == data_size) {
-			LOG("All data sent\n");
+			LOG("<<All data sent\n");
 		} else { //TODO toto by se MP osetrovat ani nemelo
-			LOG("Some data were probably lost while sending\n");
+			LOG("<<Some data were probably lost while sending\n");
 			goto cleanup_fd;
 		}
 	
 		/* Read confirmation of received data */
 		read_command(serv_sock, command);
-		if (strncmp(OK, command, CMD_LEN) != 0) {
-			LOG("Incomming command: ? (NO)OK\n");
+		if (strncmp(OK, command, CMD_LEN) == 0) {
+			LOG(">>Incomming command: OK\n");
+		} else if (strncmp(NOOK, command, CMD_LEN) == 0) {
+			/* Server is not ready, he can request again after he will have enough space */
+			LOG(">>Incomming command: NOOK\n");
+			goto cleanup_fd;
+		} else {
+			/* Unexpected command */
+			LOG(">>Unexpected command instead of (NO)OK!\n");
 			goto cleanup_fd;
 		}
-		LOG("Incomming command: OK\n");
 
 		/* Block is swapped out and can be safely freed now */
 		shee(ptr);
@@ -257,6 +283,8 @@ void *shwapoff(void *ptr) {
 			}
 	
 	}
+	//TODO kam s tim?
+	free_config(config);
 	return NULL;
 }
 
@@ -287,9 +315,11 @@ void *shwapon(void *shwap_ptr) {
 		hints.ai_family = AF_UNSPEC;
 	
 		struct client cl = config->items[i];
+		LOG("Zkousim %d. klienta >%s:%s<\n", i+1, cl.host, cl.port);
 		int err;
 		if ((err = getaddrinfo(cl.host, cl.port, &hints, &orig_sa)) != 0) {
-			fprintf(stderr, "%s\n", gai_strerror(err));
+			printf("%s\n", gai_strerror(err));
+			continue;
 		}
 	
 		int serv_sock;
@@ -300,45 +330,58 @@ void *shwapon(void *shwap_ptr) {
 				continue;
 			}
 			if (!connect(serv_sock, sa->ai_addr, sa->ai_addrlen)) {
+				/* Success */
 				break;
 			}
+			close(serv_sock);
 		}
-		freeaddrinfo(orig_sa);
-		/* Unable to connect, lets try another client */
-		if (serv_sock == -1) {
+		/* No address succeeded, lets try another client */
+		if (sa == NULL) {
+			printf("Could not connect to %d. client!\n", i+1);
 			continue;
 		}
 		/* Connection successful */
+		LOG("Connection succeeded\n");
+		freeaddrinfo(orig_sa);
 	
-		/* Send RFD(RID) to server */
+		/* Send RFD(RID, pow) to server */
 		net_write(serv_sock, RFD, CMD_LEN);
 		tmp = htonl(RID);
-		net_write(serv_sock, (char *)&tmp, sizeof(uint32_t));
+		net_write(serv_sock, (char *)&tmp, 4);
+		net_write(serv_sock, (char *)&pow, 1);
+		LOG("<<RFD(RID=%"PRIu32", pow=%u) sended\n", RID, pow);
 	
 		/* Wait for (NO)READY command */
 		read_command(serv_sock, command);
-		if (strncmp(READY, command, CMD_LEN) != 0) {
-			LOG("Incomming command: ? (NO)READY\n");
+		if (strncmp(READY, command, CMD_LEN) == 0) {
+			LOG(">>Incomming command: READY\n");
+			/* This server is willing to receive data */
+		} else if (strncmp(NOREADY, command, CMD_LEN) == 0) {
+			LOG(">>Incomming command: NOREADY\n");
+			/* This server can't provide space for us, lets try another one */
+			goto cleanup_fd;
+		} else {
+			/* Unexpected command, lets try another server */
+			LOG(">>Unexpected command instead of (NO)READY!\n");
 			goto cleanup_fd;
 		}
-		LOG("Incomming command: READY\n");
 	
 		/* Send (NO)OK, based on result from shalloc() to server */
 		void *ptr = shalloc(data_size);
 		if (ptr == NULL) {
-			LOG("Sending NOOK, shalloc() failed!\n");
 			net_write(serv_sock, NOOK, CMD_LEN);
+			LOG("<<NOOK sended, shalloc() failed!\n");
 			goto cleanup_fd;
 		}
-		LOG("Sending OK, shalloc() successful\n");
 		net_write(serv_sock, OK, CMD_LEN);
+		LOG("<<OK sended, shalloc() successful\n");
 
 		/* Recieve data from server */
 		//TODO buffered_net_read()
 		if (net_read(serv_sock, ptr, data_size) == data_size) {
-			LOG("All data received\n");
-		} else { //TODO toto by se MP osetrovat ani nemelo
-			LOG("Some data were probably lost while receiving!\n");
+			LOG(">>All requested data were received\n");
+		} else { //TODO osetrovat?
+			LOG(">>Some data were probably lost while receiving!\n");
 			goto cleanup_fd;
 		}
 	
@@ -350,6 +393,8 @@ void *shwapon(void *shwap_ptr) {
 		/* Swapon was successful, ID can be reused */
 		shee(ret_bl);
 		ret_bl = NULL;
+		//TODO: pokud je ID set prazdny, zavolam
+		//free_config(config);
 
 		/* Return pointer to retrieved block data section */
 		return ptr;
@@ -364,10 +409,157 @@ void *shwapon(void *shwap_ptr) {
 	return NULL;
 }
 
+static char *get_ip_str(const struct sockaddr *sa, char *s, size_t maxlen) {
+	switch(sa->sa_family) {
+		case AF_INET:
+			inet_ntop(AF_INET, &(((struct sockaddr_in *)sa)->sin_addr), s, maxlen);
+			break;
+		case AF_INET6:
+			inet_ntop(AF_INET6, &(((struct sockaddr_in6 *)sa)->sin6_addr), s, maxlen);
+			break;
+		default:
+			strncpy(s, "Unknown AF", maxlen);
+			return NULL;
+	}
+	return s;
+}
+
+//TODO
+void *first;
+uint32_t first_ID;
+void set_add(uint32_t ID, void *ptr) {
+	LOG("set_add() is WIP!\n");
+	first = ptr;
+	first_ID = ID;
+}
+void *set_find(uint32_t ID) {
+	LOG("set_find() is WIP!\n");
+	if (first_ID == ID) {
+		return first;
+	}
+	LOG("set_find() ERROR!\n");
+	return NULL;
+}
+void set_remove(uint32_t ID) {
+	LOG("set_remove() is WIP!\n");
+}
+//TODO
+
+static void rfs_command(int cl_sock, void (*p_func)(void *)) {
+	uint8_t pow;
+	uint32_t GID, tmp;
+
+	/* Read parameters of this command */
+	if (net_read(cl_sock, (char *)&tmp, sizeof(tmp)) < 0) {
+		return;
+	}
+	GID = ntohl(tmp);
+	if (net_read(cl_sock, (char *)&pow, 1) < 0) {
+		return;
+	}
+	LOG(">>Incomming command: RFS(GID=%"PRIu32", pow=%u)\n", GID, pow);
+
+	/* Try to shalloc() requested space */
+	void *ptr;
+	unsigned long bl_size = pow2(pow) - B_SIZE;
+	//TODO + 1 - smazano, jeste je potreba osetrit
+	ptr = shalloc(bl_size);
+	/* Return possibility to allocate this amount of space */
+	if (ptr == NULL) {
+		net_write(cl_sock, NOREADY, CMD_LEN);
+		LOG("<<NOREADY sended\n");
+		return;
+	}
+	net_write(cl_sock, READY, CMD_LEN);
+	LOG("<<READY sended\n");
+
+	/* Receive data and store them + confirm delivery */
+	//TODO buffered_net_read()
+	if (net_read(cl_sock, ptr, bl_size) == bl_size) {
+		net_write(cl_sock, OK, CMD_LEN);
+		LOG("<<All data received and stored\n");
+	} else {
+		net_write(cl_sock, NOOK, CMD_LEN);
+		LOG("<<Some data were probably lost\n");
+		return;
+	}
+
+	/* Save information about this block */
+	set_add(GID, ptr);
+
+	/* Perform desired function on it */
+	if (p_func != NULL) {
+		LOG("Processor function will be applied now\n");
+		p_func(ptr);
+	}
+}
+
+static void rfd_command(int cl_sock) {
+	char command[CMD_LEN];
+	uint8_t pow;
+	uint32_t RID, tmp;
+	void *ptr;
+
+	/* Read parameters of this command */
+	if (net_read(cl_sock, (char *)&tmp, sizeof(tmp)) < 0) {
+		return;
+	}
+	RID = ntohl(tmp);
+	if (net_read(cl_sock, (char *)&pow, 1) < 0) {
+		return;
+	}
+	LOG(">>Incomming command: RFD(RID=%"PRIu32", pow=%u)\n", RID, pow);
+
+	//TODO
+	/* Verify existence of RID in local memory, then send response based on verification */
+	if ((ptr = set_find(RID)) != NULL) {
+		net_write(cl_sock, READY, CMD_LEN);
+		LOG("<<READY sended\n");
+	} else {
+		net_write(cl_sock, NOREADY, CMD_LEN);
+		LOG("<<NOREADY sended\n");
+		/* We don't have this block, therefore client has to ask another server */
+		return;
+	}
+
+	/* Read response of client - if he's ready to recieve the data */
+	read_command(cl_sock, command);
+	if (strncmp(OK, command, CMD_LEN) == 0) {
+		LOG(">>Incomming command: OK\n");
+	} else if (strncmp(NOOK, command, CMD_LEN) == 0) {
+		/* Server is not ready, he can request again after he will have enough space */
+		LOG(">>Incomming command: NOOK\n");
+		return;
+	} else {
+		/* Unexpected command */
+		LOG(">>Unexpected command instead of (NO)OK!\n");
+		return;
+	}
+
+	/* Size of data section in bytes, which client requested */
+	size_t data_size = pow2(pow) - B_SIZE;
+
+	/* Now we can send the data to client */
+	//TODO buffered_net_write()
+	if (net_write(cl_sock, ptr, data_size) == data_size) {
+		LOG("<<All of the required data were sent\n");
+	} else { //TODO chovani do dokumentace!
+		LOG("<<Some data were probably lost while sending!\n");
+		/* Let's get another chance to client and don't free this block */
+		return;
+	}
+
+	/* This block is no longer needed to be stored here */
+	shee(ptr);
+	set_remove(RID);
+}
+
 void shwap_server(int port, void (*p_func)(void *)) {
 	int sockfd, cl_sock;
 	socklen_t cli_len;
 	struct sockaddr_in serv_addr, cli_addr;
+	char command[CMD_LEN];
+	char straddr[INET6_ADDRSTRLEN];
 
 	/* Connection will be realized through TCP */
 	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
@@ -387,128 +579,37 @@ void shwap_server(int port, void (*p_func)(void *)) {
 	listen(sockfd, 5);
 	cli_len = sizeof(cli_addr);
 
-while(1) {
-
-	/* Start listening for incomming conection */
-	cl_sock = accept(sockfd, (struct sockaddr *)&cli_addr, &cli_len);
-	if (cl_sock < 0) {
-		perror("ERROR on accept");
-		return;
-	}
-
-	/* Start reading */
-	char command[CMD_LEN];
-	uint8_t power;
-	uint32_t GID, RID; /* Given and requested IDs */
-	uint32_t tmp;
-
-	/* Accept RFS(power, ID) */
-	read_command(cl_sock, command);
-	if (strncmp(RFS, command, CMD_LEN) != 0) {
-		//TODO jinak nez s goto
-		if (strncmp(RFD, command, CMD_LEN) != 0) {
-			goto cleanup_fd;
+	while(1) {
+		LOG("\nWAITING FOR CLIENT\n");
+		/* Start listening for incomming conection */
+		cl_sock = accept(sockfd, (struct sockaddr *)&cli_addr, &cli_len);
+		if (cl_sock < 0) {
+			perror("accept");
+			continue;
 		}
-		goto rfd_command;
-	}
-	LOG("Incomming command: RFS\n");
-	/* Read parameters of this command */
-	if (net_read(cl_sock, (char *)&tmp, sizeof(tmp)) < 0) {
-		goto cleanup_fd;
-	}
-	GID = ntohl(tmp);
-	if (net_read(cl_sock, (char *)&power, 1) < 0) {
-		goto cleanup_fd;
-	}
-	LOG("RFS(GID=%"PRIu32", power=%u)\n", GID, power);
-
-	/* Try to shalloc() requested space */
-	void *ptr;
-	unsigned long bl_size = pow2(power) - B_SIZE;
-	ptr = shalloc(bl_size);
-	/* Return possibility to allocate this amount of space */
-	if (ptr == NULL) {
-		net_write(cl_sock, NOREADY, CMD_LEN);
-		LOG("NOREADY sended\n");
-		goto cleanup_fd;
-	}
-	net_write(cl_sock, READY, CMD_LEN);
-	LOG("READY sended\n");
-
-	/* Receive data and store them + confirm delivery */
-	//TODO buffered_net_read()
-	if (net_read(cl_sock, ptr, bl_size) == bl_size) {
-		net_write(cl_sock, OK, CMD_LEN);
-		LOG("All data received and stored\n");
-	} else {
-		net_write(cl_sock, NOOK, CMD_LEN);
-		LOG("Some data were probably lost\n");
-		goto cleanup_fd;
-	}
-
-	/* Perform desired function on it */
-	if (p_func != NULL) {
-		LOG("desired function will be applied\n");
-		p_func(ptr);
-		LOG("desired function was applied\n");
-	}
-
-	//TODO neni vhodne uziti goto
-	goto cleanup_fd;
-	rfd_command:
-
-	/* Wait for shwapon() request ~ RFD command */
-	read_command(cl_sock, command);
-	if (strncmp(RFD, command, CMD_LEN) != 0) {
-		goto cleanup_ptr;
-	}
-	LOG("Incomming command: RFD\n");
-	/* Read parameters of this command */
-	if (net_read(cl_sock, (char *)&tmp, sizeof(tmp)) < 0) {
-		goto cleanup_ptr;
-	}
-	RID = ntohl(tmp);
-	LOG("RFD(RID=%"PRIu32")\n", RID);
-
-	/* TODO Verify existence of RID in local memory */
-	// => ziskej a nastav 'ptr' na pozadovany blok, pokud existuje + oprava nasledujiciho if
-	/* Send response based on verification */
-	if (GID == RID) {
-		net_write(cl_sock, READY, CMD_LEN);
-	} else {
-		net_write(cl_sock, NOREADY, CMD_LEN);
-		// 'ptr' blok si chci v pameti nechat, nekdo jiny ho AC bude chtit
-		goto cleanup_fd;
-	}
-
-	/* Read response of client - if he's ready to recieve data */
-	read_command(cl_sock, command);
-	if (strncmp(OK, command, CMD_LEN) != 0) {
-		/* Server is not ready, he can request again after he will have enough space */
-		goto cleanup_ptr;
-	}
-	LOG("Incomming command: OK\n");
-
-	/* Now we can send data to client */
-	//TODO buffered_net_write()
-	if (net_write(cl_sock, ptr, bl_size) == bl_size) {
-		LOG("All data send\n");
-	} else { //TODO toto by se MP osetrovat ani nemelo
-		LOG("Some data were probably lost while sending\n");
-		/* Let's get another chance to client */
-		goto cleanup_fd;
-	}
-
-	/* This session ended */
-	cleanup_ptr:
-		shee(ptr);
-	cleanup_fd:
-		if(close(cl_sock) == -1) {
+		LOG("Client >%s:%u< connected\n", get_ip_str((struct sockaddr *)&cli_addr, straddr, sizeof(straddr)), ntohs(cli_addr.sin_port));
+	
+		/* Communication starts now */
+		read_command(cl_sock, command);
+		if (strncmp(RFS, command, CMD_LEN) == 0) {
+			/* Accept RFS(GID, pow) */
+			rfs_command(cl_sock, p_func);
+		} else if (strncmp(RFD, command, CMD_LEN) == 0) {
+			/* Accept RFD(RID, pow) */
+			rfd_command(cl_sock);
+		} else {
+			/* Unexpected command */
+			LOG(">>Unexpected command!\n");
+		}
+	
+		/* Connection with this client is over */
+		if (close(cl_sock) == -1) {
 			perror("close");
 		}
-
-	} //TODO EO while(true) loop
-	close(sockfd);
+	}
+	if (close(sockfd) == -1) {
+		perror("close");
+	}
 
 	return;
 }
