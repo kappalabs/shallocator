@@ -16,7 +16,9 @@
 #include "net_utils.h"
 #include "shalloc.h"
 #include "utils.h"
+#include "set.h"
 
+#define BUF_LEN	4096
 
 /**
  *  This structure will contain whole config file.
@@ -100,11 +102,12 @@ void free_config(struct clients *config) {
  *  always be equal to 'size'.
  */
 ssize_t net_read_write(int sock, char *buf, size_t size, int is_read) {
-	ssize_t total = 0;
+	size_t total = 0;
 	ssize_t n;
 	if (is_read) {
 		bzero(buf, size);
 	}
+	errno = 0;
 	while (total < size) {
 		if (is_read) {
 			n = read(sock, (char *)((size_t)buf + total), size - total);
@@ -115,6 +118,9 @@ ssize_t net_read_write(int sock, char *buf, size_t size, int is_read) {
 		if (n == -1) {
 			perror("read");
 			return -1;
+		} else if (errno == EINTR) {
+		      n = 0; 
+		      errno = 0;
 		} else if (is_read && n == 0 && total < size) {
 			/* Connection was probably lost */
 			return -1;
@@ -125,11 +131,43 @@ ssize_t net_read_write(int sock, char *buf, size_t size, int is_read) {
 
 /**
  *  Read/write exactly 'size' bytes if possible into/from 'buf' from/into socket 'sock'.
+ *  This version is buffered if data size is above buffer size limit.
  */
 ssize_t net_read(int sock, char *buf, size_t size) {
+	/* Buffered read */
+	if (size > BUF_LEN) {
+		char BUF[BUF_LEN];
+		size_t total = 0;
+		ssize_t n, min;
+		while (total < size) {
+			min = MIN(BUF_LEN, size - total);
+			n = net_read_write(sock, BUF, min, 1);
+			if (n == -1) {
+				return -1;
+			}
+			memcpy(buf + total, &BUF, n);
+			total += n;
+		}
+		return total;
+	}
+	/* Unbuffered read */
 	return net_read_write(sock, buf, size, 1);
 }
 ssize_t net_write(int sock, char *buf, size_t size) {
+	/* Buffered write */
+	if (size > BUF_LEN) {
+		size_t total = 0;
+		ssize_t n, min;
+		while (total < size) {
+			min = MIN(BUF_LEN, size - total);
+			n = net_read_write(sock, buf + total, min, 0);
+			if (n == -1) {
+				return -1;
+			}
+			total += n;
+		}
+		return total;
+	}
 	return net_read_write(sock, buf, size, 0);
 }
 
@@ -144,10 +182,66 @@ void read_command(int sock, char *com) {
 	}
 }
 
+int get_serv_socket(struct client cl) {
+	struct addrinfo hints, *sa, *orig_sa;
+	//bzero(&hints, sizeof(hints));
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = 0;
+	hints.ai_protocol = 0;
+	
+	//LOG("Trying %d. server >%s:%s<\n", i+1, cl.host, cl.port);
+	int err;
+	//TODO
+	if ((err = getaddrinfo(cl.host, cl.port, &hints, &orig_sa)) != 0) {
+		printf("%s\n", gai_strerror(err));
+		return -1;
+	}
+	
+	int serv_sock;
+	for (sa = orig_sa; sa != NULL; sa = sa->ai_next) {
+		serv_sock = socket(sa->ai_family, sa->ai_socktype, sa->ai_protocol);
+		if (serv_sock == -1){
+			perror("socket");
+			continue;
+		}
+		if (connect(serv_sock, sa->ai_addr, sa->ai_addrlen) != -1) {
+			/* Success */
+			break;
+		}
+		close(serv_sock);
+	}
+	if (orig_sa != NULL) {
+		freeaddrinfo(orig_sa);
+	}
+	/* No address succeeded, lets try another server */
+	if (sa == NULL) {
+		printf("Could not connect to server >%s:%s< !\n", cl.host, cl.port);
+		return -1;
+	}
+	/* Connection was created */
+
+	/* Defines how much time we want to wait for respond of server */
+	struct timeval tv;
+	tv.tv_sec = 5;
+	tv.tv_usec = 0;
+
+	/* Set maximum read() blocking time */
+	if (setsockopt(serv_sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(struct timeval)) != 0) {
+		perror("setsockopt");
+		return -1;
+	}
+	
+
+	return serv_sock;
+}
+
 /**
  *  Send data block to random server.
  */
 void *shwapoff(void *ptr) {
+	LOG("\nshwapoff():\n");
 	if (config == NULL) {
 		config = read_config("demo.cfg");
 	}
@@ -167,52 +261,20 @@ void *shwapoff(void *ptr) {
 	uint32_t GID = swapped_bls.num;
 	uint32_t tmp;
 
+	LOG("shwapoff() 1\n");
 	/* Try to find first available client */
 	int i;
 	for (i=0; i < config->num_items; i++) {
-		struct addrinfo hints, *sa, *orig_sa;
-		bzero(&hints, sizeof(hints));
-		hints.ai_socktype = SOCK_STREAM;
-		hints.ai_family = AF_UNSPEC;
-	
-		struct client cl = config->items[i];
-		LOG("Zkousim %d. klienta >%s:%s<\n", i+1, cl.host, cl.port);
-		int err;
-		if ((err = getaddrinfo(cl.host, cl.port, &hints, &orig_sa)) != 0) {
-			printf("%s\n", gai_strerror(err));
-			continue;
-		}
-	
+		LOG("shwapoff() 2\n");
 		int serv_sock;
-		for (sa = orig_sa; sa != NULL; sa = sa->ai_next) {
-			serv_sock = socket(sa->ai_family, sa->ai_socktype, sa->ai_protocol);
-			if (serv_sock == -1){
-				perror("socket");
-				continue;
-			}
-			if (!connect(serv_sock, sa->ai_addr, sa->ai_addrlen)) {
-				/* Success */
-				break;
-			}
-			close(serv_sock);
-		}
-		/* No address succeeded, lets try another client */
-		if (sa == NULL) {
-			printf("Could not connect to client >%s:%s< !\n", cl.host, cl.port);
+		if ((serv_sock = get_serv_socket(config->items[i])) == -1) {
 			continue;
 		}
-		/* Connection was created */
-		freeaddrinfo(orig_sa);
+		LOG("shwapoff() 3\n");
 
-		//TODO prekontrolovat
-		/* Set maximum read() blocking time */
-		struct timeval tv;
-		tv.tv_sec = 5;
-		tv.tv_usec = 0;
-		setsockopt(serv_sock, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(struct timeval));
-	
 		/* Send RFS(GID, pow) to server */
 		net_write(serv_sock, RFS, CMD_LEN);
+		LOG("shwapoff() 4\n");
 		tmp = htonl(GID);
 		net_write(serv_sock, (char *)&tmp, 4);
 		net_write(serv_sock, (char *)&pow, 1);
@@ -234,10 +296,9 @@ void *shwapoff(void *ptr) {
 		}
 	
 		/* Send data to server */
-		//TODO buffered_net_write()
 		if (net_write(serv_sock, ptr, data_size) == data_size) {
 			LOG("<<All data sent\n");
-		} else { //TODO toto by se MP osetrovat ani nemelo
+		} else {
 			LOG("<<Some data were probably lost while sending\n");
 			goto cleanup_fd;
 		}
@@ -283,8 +344,6 @@ void *shwapoff(void *ptr) {
 			}
 	
 	}
-	//TODO kam s tim?
-	free_config(config);
 	return NULL;
 }
 
@@ -292,6 +351,7 @@ void *shwapoff(void *ptr) {
  *  Retrieve shwaped data block back from server.
  */
 void *shwapon(void *shwap_ptr) {
+	LOG("\nshwapon():\n");
 	/* False call */
 	if (config == NULL || shwap_ptr == NULL) {
 		return NULL;
@@ -309,40 +369,10 @@ void *shwapon(void *shwap_ptr) {
 	/* Try to find client with desired block */
 	int i;
 	for (i=0; i < config->num_items; i++) {
-		struct addrinfo hints, *sa, *orig_sa;
-		bzero(&hints, sizeof(hints));
-		hints.ai_socktype = SOCK_STREAM;
-		hints.ai_family = AF_UNSPEC;
-	
-		struct client cl = config->items[i];
-		LOG("Zkousim %d. klienta >%s:%s<\n", i+1, cl.host, cl.port);
-		int err;
-		if ((err = getaddrinfo(cl.host, cl.port, &hints, &orig_sa)) != 0) {
-			printf("%s\n", gai_strerror(err));
-			continue;
-		}
-	
 		int serv_sock;
-		for (sa = orig_sa; sa != NULL; sa = sa->ai_next) {
-			serv_sock = socket(sa->ai_family, sa->ai_socktype, sa->ai_protocol);
-			if (serv_sock == -1){
-				perror("socket");
-				continue;
-			}
-			if (!connect(serv_sock, sa->ai_addr, sa->ai_addrlen)) {
-				/* Success */
-				break;
-			}
-			close(serv_sock);
-		}
-		/* No address succeeded, lets try another client */
-		if (sa == NULL) {
-			printf("Could not connect to %d. client!\n", i+1);
+		if ((serv_sock = get_serv_socket(config->items[i])) == -1) {
 			continue;
 		}
-		/* Connection successful */
-		LOG("Connection succeeded\n");
-		freeaddrinfo(orig_sa);
 	
 		/* Send RFD(RID, pow) to server */
 		net_write(serv_sock, RFD, CMD_LEN);
@@ -377,10 +407,9 @@ void *shwapon(void *shwap_ptr) {
 		LOG("<<OK sended, shalloc() successful\n");
 
 		/* Recieve data from server */
-		//TODO buffered_net_read()
 		if (net_read(serv_sock, ptr, data_size) == data_size) {
 			LOG(">>All requested data were received\n");
-		} else { //TODO osetrovat?
+		} else {
 			LOG(">>Some data were probably lost while receiving!\n");
 			goto cleanup_fd;
 		}
@@ -393,8 +422,8 @@ void *shwapon(void *shwap_ptr) {
 		/* Swapon was successful, ID can be reused */
 		shee(ret_bl);
 		ret_bl = NULL;
-		//TODO: pokud je ID set prazdny, zavolam
-		//free_config(config);
+	//TODO kam s tim?
+	//free_config(config);
 
 		/* Return pointer to retrieved block data section */
 		return ptr;
@@ -424,26 +453,71 @@ static char *get_ip_str(const struct sockaddr *sa, char *s, size_t maxlen) {
 	return s;
 }
 
-//TODO
-void *first;
-uint32_t first_ID;
-void set_add(uint32_t ID, void *ptr) {
-	LOG("set_add() is WIP!\n");
-	first = ptr;
-	first_ID = ID;
+
+/*
+ *  --## SERVER SIDE PART ##--
+ */
+
+struct serv_data {
+	uint32_t ID;
+	//ID_t ID;
+	void *ptr;
+};
+
+static struct set_item *serv_set_head;
+
+//TODO zamky nad operacemi s 'set' - "vyresi" vice klientu stejne ID!
+
+/*
+ *  (<) ~ -1
+ *  (=) ~  0
+ *  (>) ~ +1
+ */
+static int serv_comp(void *it1, void *it2) {
+	uint32_t ID1 = ((struct serv_data *)it1)->ID;
+	uint32_t ID2 = ((struct serv_data *)it2)->ID;
+	return (ID1 < ID2) ? -1 : ((ID1 == ID2) ? 0 : 1);
 }
-void *set_find(uint32_t ID) {
-	LOG("set_find() is WIP!\n");
-	if (first_ID == ID) {
-		return first;
+
+//static void serv_print(void *ptr) {
+//	LOG("%lu", ((struct serv_data *)ptr)->ID);
+//}
+//
+//static void serv_set_print() {
+//	struct serv_data zero_it;
+//	zero_it.ID = 0;
+//	set_print(serv_set_head, &zero_it, serv_print);
+//}
+
+static int serv_set_add(uint32_t ID, void *ptr) {
+	struct serv_data *new_it;
+	if ((new_it = (struct serv_data *)shalloc(sizeof(struct serv_data))) == NULL) {
+		perror("shalloc");
+		return -1;
 	}
-	LOG("set_find() ERROR!\n");
-	return NULL;
+	new_it->ID = ID;
+	new_it->ptr = ptr;
+
+	return set_add(&serv_set_head, (void *)new_it, serv_comp);
 }
-void set_remove(uint32_t ID) {
-	LOG("set_remove() is WIP!\n");
+
+static void *serv_set_find(uint32_t ID) {
+	struct serv_data check_it;
+	check_it.ID = ID;
+	struct serv_data *ret;
+	ret = set_find(serv_set_head, (void *)&check_it, serv_comp);
+	if (ret == NULL) {
+		return NULL;
+	}
+	return ret->ptr;
 }
-//TODO
+
+static void serv_set_remove(uint32_t ID) {
+	struct serv_data rem_it;
+	rem_it.ID = ID;
+	shee(set_remove(&serv_set_head, (void *)&rem_it, serv_comp));
+}
+
 
 static void rfs_command(int cl_sock, void (*p_func)(void *)) {
 	uint8_t pow;
@@ -462,7 +536,6 @@ static void rfs_command(int cl_sock, void (*p_func)(void *)) {
 	/* Try to shalloc() requested space */
 	void *ptr;
 	unsigned long bl_size = pow2(pow) - B_SIZE;
-	//TODO + 1 - smazano, jeste je potreba osetrit
 	ptr = shalloc(bl_size);
 	/* Return possibility to allocate this amount of space */
 	if (ptr == NULL) {
@@ -470,6 +543,14 @@ static void rfs_command(int cl_sock, void (*p_func)(void *)) {
 		LOG("<<NOREADY sended\n");
 		return;
 	}
+	/* Save information about this block */
+	if (serv_set_add(GID, ptr) != 0) {
+		LOG("Can't safe information about this block!\n");
+		net_write(cl_sock, NOREADY, CMD_LEN);
+		LOG("<<NOREADY sended\n");
+		return;
+	}
+
 	net_write(cl_sock, READY, CMD_LEN);
 	LOG("<<READY sended\n");
 
@@ -483,9 +564,6 @@ static void rfs_command(int cl_sock, void (*p_func)(void *)) {
 		LOG("<<Some data were probably lost\n");
 		return;
 	}
-
-	/* Save information about this block */
-	set_add(GID, ptr);
 
 	/* Perform desired function on it */
 	if (p_func != NULL) {
@@ -510,9 +588,8 @@ static void rfd_command(int cl_sock) {
 	}
 	LOG(">>Incomming command: RFD(RID=%"PRIu32", pow=%u)\n", RID, pow);
 
-	//TODO
 	/* Verify existence of RID in local memory, then send response based on verification */
-	if ((ptr = set_find(RID)) != NULL) {
+	if ((ptr = serv_set_find(RID)) != NULL) {
 		net_write(cl_sock, READY, CMD_LEN);
 		LOG("<<READY sended\n");
 	} else {
@@ -540,7 +617,6 @@ static void rfd_command(int cl_sock) {
 	size_t data_size = pow2(pow) - B_SIZE;
 
 	/* Now we can send the data to client */
-	//TODO buffered_net_write()
 	if (net_write(cl_sock, ptr, data_size) == data_size) {
 		LOG("<<All of the required data were sent\n");
 	} else { //TODO chovani do dokumentace!
@@ -551,7 +627,7 @@ static void rfd_command(int cl_sock) {
 
 	/* This block is no longer needed to be stored here */
 	shee(ptr);
-	set_remove(RID);
+	serv_set_remove(RID);
 }
 
 void shwap_server(int port, void (*p_func)(void *)) {

@@ -1,31 +1,28 @@
 .PHONY: clean examples
 
-CFLAGS	= -Wall -g -c# -m32 #-std=c89 #-m64
-LDFLAGS	= -Wall -g# -m32 #-m64
-LDLIBS	= -lm
-LIB	= libshalloc.a
-SOURCES	= $(wildcard *.c)
-OBJS	= $(SOURCES:.c=.o)
-CC	= gcc
+CFLAGS	:= -Wall -g -O3 -fPIC
+CC	:= gcc
+SOURCES	:= $(wildcard *.c)
+OBJS	:= $(SOURCES:.c=.o)
+LIBNAME	:= shalloc
+MAJOR	:= 0
+MINOR	:= 1
+VERSION	:= $(MAJOR).$(MINOR)
+RM	:= rm -f
 
+all: lib$(LIBNAME).so.$(VERSION) examples
 
-all:	libshalloc examples
+lib$(LIBNAME).so.$(VERSION): $(OBJS)
+#	$(CC) -shared -Wl,-soname,lib$(LIBNAME).so.$(MAJOR) $^ -o $@
+	$(CC) -shared -o $@ $^ -lm -pthread
 
-#libobj: $(wildcard *.c) $(wildcard *.h)
-#	$(CC) $(CFLAGS) $(SOURCES) $(LDLIBS)
+lib$(NAME).so: lib$(LIBNAME).so.$(VERSION)
+	ldconfig -v -n .
+	ln -f -s lib$(LIBNAME).so.$(VERSION) lib$(LIBNAME).so
 
-libshalloc: $(OBJS)
-#	ar -cvq $(LIB) $(OBJS)
-	ar -rcs $(LIB) $(OBJS)
-
-examples: $(LIB)
-	cd examples; make
-
-#$(PROG): $(OBJS)
-#	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
-#
-%.o: %.c %.h
-	$(CC) $(CFLAGS) -o $@ $<
+examples: lib$(NAME).so
+	cd examples; make clean; make
 
 clean:
-	rm -f $(PROG) $(OBJS)
+	$(RM) $(PROG) *.o *.so* *.a
+	cd examples; make clean

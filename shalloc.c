@@ -7,17 +7,42 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <limits.h>
+#include <pthread.h>
 
 #include "shalloc.h"
 #include "utils.h"
 #include "net_utils.h"
 
 
-#define MIN(a,b)	(((a)<(b)) ? (a) : (b))
-#define MAX(a,b)	(((a)>(b)) ? (a) : (b))
+static struct mem_pool mp;
+/*
+ *  Thread that will zero out available memory.
+ *  It will also take care of destroying the memory pool structure.
+ */
+static pthread_t cleaner_th;
+/*
+ *  Locks for safe work with memory pool structure with multiple threads.
+ */
+//pthread_mutex_t mp_mutex = PTHREAD_MUTEX_INITIALIZER;
+//pthread_cond_t mp_condvar = PTHREAD_COND_INITIALIZER;
 
+void thread_cleanup(void *arg) {
+	LOG("--## THREAD CLEANUP ##--\n");
+	fflush(stdout);
+//	pthread_mutex_destroy(&mp_mutex);
+//	pthread_cond_destroy(&mp_condvar);
+	pthread_exit(NULL);
+}
 
-struct mem_pool mp;
+void *cleaning_work(void *ptr) {
+	LOG("--## CLEANER THREAD INIT ##--\n");
+	pthread_cleanup_push(thread_cleanup, "Cleaning thread's handler");
+	while (1) {
+	}
+	pthread_cleanup_pop(1);
+	pthread_exit(NULL);
+	//return NULL;
+}
 
 void print_avail_map() {
 	if (mp.base_addr == NULL) {
@@ -59,13 +84,12 @@ static int init_pool() {
 	first_b->k_size = mp.init_size;
 
 	LOG("--## POOL INIT INFO ##--\n");
-	LOG("Heap memory begins at base_addr = %p\n", mp.base_addr);
-	LOG("Size of the first block is init_size = 2^%lu = %luB\n", mp.init_size, pow2(mp.init_size));
-	LOG("Maximum pool size is max_size = 2^%lu = %luB\n", mp.max_size, -1L);
+	LOG("## Heap memory begins at base_addr = %p\n", mp.base_addr);
+	LOG("## Size of the first block is init_size = 2^%lu = %luB\n", mp.init_size, pow2(mp.init_size));
+	LOG("## Maximum pool size is max_size = 2^%lu = %luB\n", mp.max_size, -1L);
 
 	/* Init 'avail', array of cyclic linked list */
 	mp.avail = (struct avail_head *) B_DATA(first_b);
-	LOG("mp.avail addr = %p\n", mp.avail);
 	int i;
 	for (i=0; i <= mp.max_size; i++) {
 		mp.avail[i].next = (struct block *) &mp.avail[i];
@@ -75,7 +99,18 @@ static int init_pool() {
 	first_b->prev = (struct block *) &mp.avail[first_b->k_size];
 	first_b->next = (struct block *) &mp.avail[first_b->k_size];
 
-	LOG("\n");
+	//TODO WIP
+	int err;
+	if ((err = pthread_create(&cleaner_th, NULL, cleaning_work, NULL)) != 0) {
+		printf("pthread_create() ERROR %d!\n", err);
+		return -1;
+	}
+	if ((err = pthread_detach(cleaner_th)) != 0) {
+		printf("pthread_detach() ERROR %d!\n", err);
+		return -1;
+	}
+	//TODO WIP
+	LOG("--## END OF POOL INIT INFO ##--\n");
 
 	return 0;
 }
@@ -333,13 +368,13 @@ void shee(void *ptr) {
 		mp.avail[mp.pool_size].prev = (struct block *) &mp.avail[mp.pool_size];
 		mp.avail[mp.pool_size].next = (struct block *) &mp.avail[mp.pool_size];
 
-		//LOG("--## SHRINKING ##--\n");
+		LOG("--## SHRINKING ##--\n");
 		/* Then we can shrink the heap/pool */
 		if (sbrk(-pow2(b->k_size)) == (void *) -1) {
 			perror("sbrk");
 		}
 		mp.pool_size--;
-		//LOG("Pool size is now %lu\n", mp.pool_size);
+		LOG("Pool size is now %lu\n", mp.pool_size);
 
 		/* Correct the 'avail' array */
 		mp.avail[mp.pool_size].prev = (struct block *) &mp.avail[mp.pool_size];
@@ -356,4 +391,21 @@ void shee(void *ptr) {
 			break;
 		}
 	}
+}
+
+void *malloc(size_t size) {
+	LOG("someone called malloc()\n");
+	return shalloc(size);
+}
+void free(void *ptr) {
+	LOG("someone called free()\n");
+	shee(ptr);
+}
+void *calloc(size_t nmemb, size_t size) {
+	LOG("someone called calloc()\n");
+	return shcalloc(nmemb, size);
+}
+void *realloc(void *ptr, size_t size) {
+	LOG("someone called realloc()\n");
+	return reshalloc(ptr, size);
 }

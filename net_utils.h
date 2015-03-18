@@ -6,6 +6,12 @@
 
 #include "shalloc.h"
 
+
+#define ID_T_LEN	4
+
+/* Type for identification of swapped block */
+typedef char ID_t[ID_T_LEN];
+
 struct client {
 	char *host;
 	char *port;
@@ -37,7 +43,8 @@ struct swp_bl {
  *                 <--  (NO)OK  % server (un)successfully saved all data
  *      <----------------------->
  *  shwapon():
- *  RFD(RID, pow)  -->  % based on unique 'RID' number, server containing this block will respond, 'pow' specifies, how many bytes client wants back from the block
+ *  RFD(RID, pow)  -->  % based on unique 'RID' number, server containing this block will respond,
+ *                      %  2^'pow' specifies, how many bytes client wants back from the block
  *                 <--  (NO)READY  % ...if this client has the requested data block available
  *  (NO)OK         -->  % server is (not)prepared to read the data block (based on shalloc() value)
  *                 <--  data  % data itself

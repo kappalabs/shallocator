@@ -100,37 +100,13 @@ extern void *reshcalloc(void *ptr, size_t size);
  */
 extern void shee(void *ptr);
 
-
 /**
- *  Dumps heap into local file.
+ *  Malloc-like functions wrappers, some libraries used here are calling them, which makes fight
+ *  between two different heap allocators. This way only Shallocator is used.
  */
-extern int dump_mem(/*TODO*/);
-
-/**
- *  OBSOLETE
- */
-/**
- *  Start to share the heap memory by creating TCP connection with hosts
- *  defined in local config file.
- *  Return number of hosts available, -1 on error.
- */
-//extern int share(/*TODO*/);
-
-/**
- *  Take the heap memory and swap it off onto hosts from local config file.
- *  Return number of hosts, that retrieved the data, -1 on error.
- */
-//extern int shwapoff(/*TODO*/);
-
-/**
- *  Make the heap memory invisible again by closing all connections with hosts.
- */
-//extern int unshare(/*TODO*/);
-
-/**
- *  As a host, accept connection and start retrieving the shared memmory.
- */
-extern int accept_shared(/*TODO*/);
-
+extern void *malloc(size_t size);
+extern void free(void *ptr);
+extern void *calloc(size_t nmemb, size_t size);
+extern void *realloc(void *ptr, size_t size);
 
 #endif
